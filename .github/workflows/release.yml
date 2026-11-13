@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            name: mac-arm64
+            binary: hikari
+          - os: windows-latest
+            name: windows-x64
+            binary: hikari.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: target/release/${{ matrix.binary }}
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: built
+      - name: zip
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF_TYPE" == "tag" ]] || version="$(git rev-parse --short HEAD)"
+          for pair in mac-arm64:mac:hikari windows-x64:windows:hikari.exe; do
+            IFS=: read -r name folder binary <<< "$pair"
+            stage="stage/hikari-$folder"
+            mkdir -p "$stage/models" "$stage/docs"
+            cp -r settings.json default.model3.json actions states LICENSE README.md "$stage/"
+            cp models/.gitkeep "$stage/models/"
+            cp docs/getting-started.md "$stage/docs/"
+            install -m 755 "built/$name/$binary" "$stage/$binary"
+            (cd stage && zip -rqX "../hikari-$version-$name.zip" "hikari-$folder")
+          done
+          sha256sum hikari-*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zips
+          path: hikari-*.zip
+      - if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes ""
+          gh release upload "$GITHUB_REF_NAME" hikari-*.zip --clobber
