@@ -1,0 +1,12 @@
+results/
+models/*
+!models/.gitkeep
+.venv/
+__pycache__/
+native/server/target/
+/target/
+native/engine/build/
+native/background/
+/hikari-renderer
+/hikari-renderer.exe
+native/launcher/target/
