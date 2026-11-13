@@ -1,0 +1,17 @@
+[package]
+name = "hikari"
+version = "0.5.1"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+hikari-core = { path = "../../core" }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+jpeg-encoder = { version = "0.6", default-features = false, features = ["std"] }
+
+[build-dependencies]
+cc = "1"
