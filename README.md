@@ -11,6 +11,34 @@ hikari draws a moc3 model and streams the frames over http or shows it in its ow
 - it bc7-compresses each texture (a quarter of the gpu memory) only if the result stays visually identical (mean error ≤ 1 and max ≤ 160 out of 255, measured per texture). otherwise the texture stays uncompressed.
 - a stream at a different size than the main view gets its own copy of the model. the main view used to update its model every frame even when nothing drew it. now it skips that (0.86 → 0.67 ms per frame on an m6, frames byte-identical).
 
+## controls
+
+### window
+
+| control | what it does |
+|---|---|
+| drag | moves the model |
+| scroll / pinch | zooms around the cursor |
+| q / e (hold) | rotates clockwise/counter-clockwise while the window is focused |
+| space | resets to the model's default framing |
+| ctrl+s (cmd+s on mac) | saves the current framing for that model (`views.json`) |
+| alt+enter (option+return on mac) | fullscreen |
+| esc | leaves fullscreen, or quits |
+| cmd+q (mac) | quits |
+
+### settings tui
+
+| control | what it does |
+|---|---|
+| esc | reverts changes |
+| up | up |
+| down | down |
+| left | left |
+| right | take a wild guess |
+| ctrl+s | saves settings |
+| enter / space | on a list row (model to idle actions): opens its picker |
+| q (mac) ctrl+c (win) | quits |
+
 ## clean room
 
 the core (`core/`) and framework (`native/framework/`) are a clean room build. one side studied how the stock runtime behaves and wrote specs. the other side wrote the code from those specs only, without seeing the stock code. every step (specs, study notes, timestamps) is documented and archived.

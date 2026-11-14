@@ -22,16 +22,7 @@ a model that fails to load returns an error instead of falling back. if youve al
 
 hikari opens the model in a window by default.
 
-| control | what it does |
-|---|---|
-| drag | moves the model |
-| scroll / pinch | zooms around the cursor |
-| q / e (hold) | rotates clockwise/counter-clockwise while the window is focused |
-| space | resets to the model's default framing |
-| ctrl+s (cmd+s on mac) | saves the current framing for that model (`views.json`) |
-| alt+enter (option+return on mac) | fullscreen |
-| esc | leaves fullscreen, or quits |
-| cmd+q (mac) | quits |
+controls are in the [readme](../README.md#controls).
 
 framing doesn't save on its own. everything you do in the window also moves the http streams for that model.
 
