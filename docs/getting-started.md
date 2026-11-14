@@ -68,7 +68,7 @@ numbers are all big-endian for faster comparisons/debugging.
 | `GET /view` | none | the model's current framing, its saved one and its default | `{"zoom", "x", "y", "rot", "saved", "default"}` (`saved` is `null` if never saved) | - |
 | `PUT /view` | `zoom`, `x`, `y`, `rot` (number, current value), `save` (bool, `false`) | moves the framing live. `save=true` also writes it to `views.json` | `204`, `500` if saving fails | `PUT /view?zoom=1.5&save=true` |
 | `GET /settings` | none | the current settings | json | - |
-| `PUT /settings` | json body with any of `model`, `face`, `idle_actions`, `action_every`, `physics` | changes them live and saves them to `settings.json` | the new settings, `400` for a bad value or a restart-only key, `500` if `settings.json` can't be read or written | `{"face": "neutral", "action_every": [10, 30]}` |
+| `PUT /settings` | json body with any of `model`, `face`, `idle_actions`, `action_every`, `transition_seconds`, `physics` | changes them live and saves them to `settings.json` | the new settings, `400` for a bad value or a restart-only key, `500` if `settings.json` can't be read or written | `{"face": "neutral", "action_every": [10, 30]}` |
 | `GET /background` | none | describes the current background | `{"kind", "name", "updated", ...}` | - |
 | `GET /background/file` | none | the background image itself | the image, or `404` | - |
 | `PUT /background` | none. body: a png, jpeg or gif | sets/switches a background from the body (5 MB max, animated gifs play) | 200, `400` if it isn't png/jpeg/gif or can't decode, `413` if too big | a png body |
