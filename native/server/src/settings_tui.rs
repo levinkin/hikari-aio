@@ -48,6 +48,7 @@ enum Key {
     Space,
     Enter,
     Escape,
+    Save,
     Quit,
     Other,
 }
@@ -196,6 +197,7 @@ fn read_key(bytes: &Receiver<u8>, timeout: Duration) -> Result<Key, RecvTimeoutE
         },
         b'\r' | b'\n' => Key::Enter,
         b' ' => Key::Space,
+        19 => Key::Save,
         b'q' | 3 => Key::Quit,
         _ => Key::Other,
     };
@@ -554,7 +556,7 @@ impl Tui {
         let mut screen = String::from("\x1b[H\x1b[2J");
         if self.open {
             let checklist = self.row == CHECKLIST_ROW;
-            let hint = if checklist { "↑↓ navigate  SPACE toggle  ENTER save  ESC back" } else { "↑↓ navigate  ENTER select  ESC back" };
+            let hint = if checklist { "↑↓ navigate  SPACE toggle  ENTER/CTRL+S save  ESC back" } else { "↑↓ navigate  ENTER select  ESC back" };
             screen.push_str(&format!(" {}{}{}\r\n {}{}{}\r\n", TITLE, ROWS[self.row], RESET, DIM, hint, RESET));
             if self.row == 2 {
                 screen.push_str(&format!(" {}png, jpeg or gif files in {}{}\r\n", DIM, self.bg_dir.display(), RESET));
@@ -580,7 +582,7 @@ impl Tui {
             }
         } else {
             screen.push_str(&format!(" {}hikari settings{}  {}127.0.0.1:{}{}\r\n", TITLE, RESET, DIM, self.port, RESET));
-            let hint = if self.row < LIST_ROWS { "↑↓ navigate  ENTER open  Q quit" } else { "↑↓ navigate  ←→ adjust  ENTER save  ESC revert  Q quit" };
+            let hint = if self.row < LIST_ROWS { "↑↓ navigate  ENTER open  CTRL+S save  Q quit" } else { "↑↓ navigate  ←→ adjust  ENTER/CTRL+S save  ESC revert  Q quit" };
             screen.push_str(&format!(" {}{}{}\r\n", DIM, hint, RESET));
             let mut pending = 0;
             for (row, label) in ROWS.iter().enumerate() {
@@ -598,7 +600,7 @@ impl Tui {
             let idle_loop = self.saved["idle_loop"].as_str().filter(|name| !name.is_empty()).unwrap_or("default");
             screen.push_str(&format!("\r\n {}restart to change: port {} · size {} · idle loop {}{}\r\n", DIM, self.port, size, idle_loop, RESET));
             if pending > 0 && self.status.is_empty() {
-                screen.push_str(&format!("\r\n {}• {} unsaved, ENTER saves, ESC reverts{}\r\n", UNSAVED, pending, RESET));
+                screen.push_str(&format!("\r\n {}• {} unsaved, ENTER or CTRL+S saves, ESC reverts{}\r\n", UNSAVED, pending, RESET));
             }
         }
         if !self.status.is_empty() {
@@ -615,7 +617,7 @@ impl Tui {
             match key {
                 Key::Up => self.pick = (self.pick + count - 1) % count,
                 Key::Down => self.pick = (self.pick + 1) % count,
-                Key::Enter if self.row == CHECKLIST_ROW => self.finish_checklist(),
+                Key::Enter | Key::Save if self.row == CHECKLIST_ROW => self.finish_checklist(),
                 Key::Space | Key::Enter => self.choose(),
                 Key::Escape | Key::Left => self.open = false,
                 _ => {}
@@ -638,7 +640,7 @@ impl Tui {
                 self.checked = self.idle.clone();
                 self.open = true;
             }
-            Key::Enter => self.save(),
+            Key::Enter | Key::Save => self.save(),
             Key::Escape => self.revert(),
             _ => {}
         }
