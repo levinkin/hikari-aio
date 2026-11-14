@@ -37,10 +37,6 @@ hikari draws a moc3 model and streams the frames over http or shows it in its ow
 | right | take a wild guess |
 | ctrl+s | saves settings |
 | enter / space | on a list row (model to idle actions): opens its picker |
-| enter | on a value row: saves, same as ctrl+s |
-| left / right | on tracking lost: turns it on/off, applies right away |
-| space | in the idle actions picker: checks/unchecks an action |
-| esc / left | in a picker: goes back without picking |
 | q (mac) ctrl+c (win) | quits |
 
 ## clean room
