@@ -93,7 +93,8 @@ pub fn open_window(exe: &std::path::Path, port: u16) {
         use std::os::unix::fs::PermissionsExt;
         let script = std::env::temp_dir().join(format!("hikari-settings-{}.command", port));
         let quoted = exe.to_string_lossy().replace('\'', "'\\''");
-        std::fs::write(&script, format!("#!/bin/sh\nexec '{}' --settings --port {}\n", quoted, port)).is_ok()
+        let close = "osascript -e 'on run argv' -e 'tell application \"Terminal\"' -e 'repeat with terminal_window in windows' -e 'if tty of selected tab of terminal_window is item 1 of argv then close terminal_window saving no' -e 'end repeat' -e 'end tell' -e 'end run' \"$window_tty\"";
+        std::fs::write(&script, format!("#!/bin/sh\nrm -f \"$0\"\nwindow_tty=$(tty)\n'{}' --settings --port {}\nnohup {} >/dev/null 2>&1 &\n", quoted, port, close)).is_ok()
             && std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).is_ok()
             && Command::new("open").arg(&script).status().is_ok_and(|status| status.success())
     };
