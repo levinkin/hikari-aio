@@ -67,7 +67,6 @@ const WINDOW_TURN_DEGREES: f32 = 90.0;
 const PHYSICS_DEFAULT: [f32; 4] = [50.0, 0.0, 90.0, 0.0];
 const MODEL_FRAMING: [f32; 4] = [f32::NAN; 4];
 const TARGET_IDLE: Duration = Duration::from_secs(10);
-const TICK_GAP_MAX_MS: f32 = 250.0;
 const WAKE_MS: f32 = 1000.0;
 const CODECS: [&str; 6] = ["jpeg", "pal256", "rgb565", "split", "qoi", "mjpeg"];
 const JPEG: u8 = 0;
@@ -170,7 +169,7 @@ struct Scene {
     lanes: Vec<LaneState>,
     targets: HashMap<(usize, usize), (*mut engine_ffi::Engine, Instant)>,
     asleep: bool,
-    advanced: Instant,
+    stepped_since_tick: bool,
 }
 
 unsafe impl Send for Scene {}
@@ -1655,7 +1654,7 @@ fn build_scene(app: &App, name: &str, tracking_lost_loop: bool, setup: Option<vt
             model.params.push((id.to_string_lossy().into_owned(), row.1, row.2, row.3));
         }
     }
-    Some(Scene { model, lanes: vec![state], targets: HashMap::new(), asleep: false, advanced: Instant::now() })
+    Some(Scene { model, lanes: vec![state], targets: HashMap::new(), asleep: false, stepped_since_tick: false })
 }
 
 fn drop_scene(app: &App, scene: Scene) {
@@ -1796,10 +1795,8 @@ fn run_render(app: Arc<App>, jobs: Receiver<Job>, port: u16) {
                 scene.prepare(&app, Lane::Shared);
                 let mut shared = app.shared.lock().unwrap_or_else(PoisonError::into_inner);
                 let state = &mut scene.lanes[Lane::Shared as usize];
-                let gap_ms = now.duration_since(scene.advanced).as_secs_f32() * 1000.0;
-                if gap_ms >= dt_ms {
-                    state.behavior.update(gap_ms.min(TICK_GAP_MAX_MS), mouth);
-                    scene.advanced = now;
+                if !std::mem::take(&mut scene.stepped_since_tick) {
+                    state.behavior.update(dt_ms, mouth);
                 }
                 shared.bg_clock_ms = state.behavior.bg_clock_ms;
                 drop(shared);
@@ -1825,7 +1822,7 @@ fn run_render(app: Arc<App>, jobs: Receiver<Job>, port: u16) {
                 drop(mouths);
                 if advance {
                     scene.lanes[Lane::Shared as usize].behavior.update(dt_ms, mouth);
-                    scene.advanced = Instant::now();
+                    scene.stepped_since_tick = true;
                 }
                 let rgba = scene.render(&app, Lane::Shared, size);
                 reply.send((rgba, scene.lanes[Lane::Shared as usize].behavior.head)).ok();
