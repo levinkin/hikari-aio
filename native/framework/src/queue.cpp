@@ -46,6 +46,13 @@ void queue_fade_out_all(queue* target)
     }
 }
 
+void queue_fade_out_entry(queue* target, int32_t index)
+{
+    queue_entry& entry = target->entries[index];
+    entry.triggered = true;
+    entry.fade_out_time = motion_fade_out(entry.source);
+}
+
 void queue_start(queue* target, motion* source)
 {
     queue_fade_out_all(target);

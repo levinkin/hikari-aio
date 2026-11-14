@@ -161,6 +161,7 @@ void queue_start(queue* target, motion* source);
 bool queue_empty(const queue* target);
 bool queue_update(queue* target, model* owner, float delta_time);
 void queue_fade_out_all(queue* target);
+void queue_fade_out_entry(queue* target, int32_t index);
 int32_t queue_entry_count(const queue* target);
 const motion* queue_entry_motion(const queue* target, int32_t index);
 bool queue_entry_fade_out_triggered(const queue* target, int32_t index);

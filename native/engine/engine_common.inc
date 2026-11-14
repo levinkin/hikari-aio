@@ -598,9 +598,25 @@ bool engine_motion_add(engine* e, const char* group, const char* path)
 bool engine_motion_idle(engine* e, const char* group)
 {
     auto found = e->motions.find(group);
-    if (found == e->motions.end())
+    if (group[0] != '\0' && found == e->motions.end())
     {
         return false;
+    }
+    if (e->idle != NULL)
+    {
+        for (int32_t i = 0; i < hfw::queue_entry_count(e->motion_queue); i++)
+        {
+            const hfw::motion* motion = hfw::queue_entry_motion(e->motion_queue, i);
+            if (std::find(e->idle->begin(), e->idle->end(), motion) != e->idle->end())
+            {
+                hfw::queue_fade_out_entry(e->motion_queue, i);
+            }
+        }
+    }
+    if (group[0] == '\0')
+    {
+        e->idle = NULL;
+        return true;
     }
     e->idle = &found->second;
     if (found->second.size() == 1)
