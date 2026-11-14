@@ -22,14 +22,15 @@ void engine_params_ahead(engine* e, float ms, const int32_t* indices, float* val
 bool engine_expression(engine* e, int layer, const char* name);
 bool engine_expression_add(engine* e, const char* name, const char* path);
 bool engine_expression_keep(engine* e, const char* name);
-void engine_expression_fade(engine* e, const char* name, float seconds);
-void engine_physics_set(engine* e, float strength, float wind, float gravity_degrees);
+void engine_transition_seconds(engine* e, float seconds);
+void engine_physics_set(engine* e, float strength, float wind, float wind_degrees, float gravity_degrees);
 void engine_physics_scale(engine* e, const char* param_id, float strength, float wind);
 void engine_expressions_stop(engine* e);
 void engine_breath_enable(engine* e, bool on);
 bool engine_idle_motions_enable(engine* e, bool on);
 bool engine_motion_add(engine* e, const char* group, const char* path);
 bool engine_motion_idle(engine* e, const char* group);
+bool engine_motion_hold(engine* e, const char* group);
 float engine_motion_play(engine* e, const char* group, bool looped);
 void engine_update(engine* e, float dt_ms, engine_hook after_motion_update, engine_hook before_model_update, void* context);
 void engine_mirror(engine* e, engine* source);

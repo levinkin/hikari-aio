@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub struct VtubeExpression {
     pub file_stem: String,
-    pub fade_seconds: f32,
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -18,7 +18,9 @@ pub struct VtubeSetup {
     pub physics_scales: Vec<(String, f32, f32)>,
     pub framing: Option<[f32; 4]>,
     pub idle_loops: Vec<(String, PathBuf)>,
+    pub tracking_lost_loop: Option<(String, PathBuf)>,
     pub animations: Vec<(String, PathBuf)>,
+    pub holds: Vec<String>,
     pub states: Vec<(String, String)>,
     pub state_files: Vec<(String, PathBuf)>,
     pub actions: Vec<String>,
@@ -224,6 +226,9 @@ pub fn load(model3_path: &Path) -> VtubeSetup {
     if let Some(path) = root["FileReferences"]["IdleAnimation"].as_str().filter(|file| !file.is_empty()).and_then(|file| find_motion(dir, file)) {
         setup.idle_loops.push((motion_stem(&path), path));
     }
+    if let Some(path) = root["FileReferences"]["IdleAnimationWhenTrackingLost"].as_str().filter(|file| !file.is_empty()).and_then(|file| find_motion(dir, file)) {
+        setup.tracking_lost_loop = Some((motion_stem(&path), path));
+    }
     for path in idle_files {
         let stem = motion_stem(&path);
         if !setup.idle_loops.iter().any(|row| row.0 == stem) {
@@ -235,6 +240,9 @@ pub fn load(model3_path: &Path) -> VtubeSetup {
         match (hotkey["Action"].as_str(), hotkey["File"].as_str().filter(|file| !file.is_empty())) {
             (Some("TriggerAnimation"), Some(file)) => {
                 let label = if name.is_empty() { file.strip_suffix(".motion3.json").unwrap_or(file) } else { name };
+                if hotkey["StopsOnLastFrame"].as_bool() == Some(true) {
+                    setup.holds.push(label.to_string());
+                }
                 if model["FileReferences"]["Motions"].get(label).is_some() {
                     continue;
                 }
@@ -248,7 +256,7 @@ pub fn load(model3_path: &Path) -> VtubeSetup {
                 add_state(&mut setup.states, name, &file_stem(file));
                 setup.expressions.push(VtubeExpression {
                     file_stem: file_stem(file),
-                    fade_seconds: hotkey["FadeSecondsAmount"].as_f64().map(|v| v as f32).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(0.5),
+                    path: find_motion(dir, file),
                 });
             }
             _ => {}

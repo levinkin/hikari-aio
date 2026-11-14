@@ -195,7 +195,7 @@ void layer_update(layer* target, model* owner, float delta_time)
             } else {
                 slot.add = std::fma(slot.add, rest, add * weight);
                 slot.multiply = std::fma(slot.multiply, rest, multiply * weight);
-                slot.overwrite = std::fma(current, rest, overwrite * weight);
+                slot.overwrite = std::fma(slot.overwrite, rest, overwrite * weight);
             }
         }
         entry_weight = entry_weight + fade_in;

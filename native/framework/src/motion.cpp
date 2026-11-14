@@ -182,7 +182,7 @@ static float curve_value(const motion& source, const curve& line, float sample_t
     int32_t end = tail.start + (tail.kind == kind_bezier ? 7 : 3);
     float tail_time = source.numbers[end];
     float tail_value = source.numbers[end + 1];
-    if (!source.loop || !(sample_time < source.loop_length)) {
+    if (!source.loop || !(sample_time < source.loop_length) || std::isinf(source.loop_length)) {
         return tail_value;
     }
     float first_value = source.numbers[line.number_first + 1];
@@ -505,6 +505,13 @@ void motion_set_loop(motion* target, bool loop, bool loop_fade_in)
 {
     target->loop = loop;
     target->loop_fade_in = loop_fade_in;
+}
+
+void motion_hold(motion* target)
+{
+    target->loop = true;
+    target->loop_fade_in = false;
+    target->loop_length = INFINITY;
 }
 
 int32_t motion_curve_count(const motion* target)

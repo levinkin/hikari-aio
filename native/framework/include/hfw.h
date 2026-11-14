@@ -147,6 +147,7 @@ void motion_destroy(motion* target);
 float motion_duration(const motion* target);
 float motion_fade_out(const motion* target);
 void motion_set_loop(motion* target, bool loop, bool loop_fade_in);
+void motion_hold(motion* target);
 int32_t motion_curve_count(const motion* target);
 int32_t motion_curve_target(const motion* target, int32_t curve);
 int32_t motion_curve_part(const motion* target, model* owner, int32_t curve);
@@ -193,6 +194,7 @@ void pose_destroy(pose* target);
 physics* physics_load(model* target, const uint8_t* bytes, size_t length, status* output_status);
 void physics_destroy(physics* target);
 void physics_set_wind(physics* target, float horizontal, float vertical);
+void physics_reset_turns(physics* target);
 void physics_set_gravity(physics* target, float horizontal, float vertical);
 void physics_evaluate(physics* target, model* owner, float delta_time);
 

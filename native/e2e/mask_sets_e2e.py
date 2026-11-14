@@ -79,6 +79,7 @@ def run(args, result, scratch):
             models.append((name, mask_e2e.find_model(name), False))
         except RuntimeError as error:
             print("skip %s: %s" % (name, error))
+    result.add("under36_controls_found", (len(models) > 0, "%d of %d under-36 models found" % (len(models), len(UNDER))))
     models.append(("over", args.over, True))
     reference = Image.open(args.reference).convert("RGBA")
     for name, path, over in models:

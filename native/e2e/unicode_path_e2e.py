@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import shutil
+import struct
 import sys
 
 import vts_e2e
@@ -11,6 +12,10 @@ PORT = 9420
 SOURCE = "Mao"
 ASCII = "uniascii%d" % os.getpid()
 UNICODE = "测试%d" % os.getpid()
+bad = "unibad%d" % os.getpid()
+bad_source = "Hiyori"
+bad_offset = 64
+bad_word = 0x7ffffff0
 RENAMES = [(SOURCE, UNICODE), ("texture", "纹理"), ("expressions", "表情"), ("motions", "动作"), ("mtn_", "动_"), ("exp_", "情_"), ("special_", "特_"), ("sample_", "样_")]
 FRAMES = 48
 SETTLE_FRAMES = 12
@@ -43,6 +48,13 @@ def make_models(owned):
     with open(path, "w", encoding="utf-8") as writer:
         json.dump(model, writer, ensure_ascii=False)
     leftovers = [name for _, dirs, files in os.walk(unicode_dir) for name in dirs + files if name.isascii()]
+    bad_dir = os.path.join(vts_e2e.REPO, "models", bad)
+    os.mkdir(bad_dir)
+    owned.append(bad_dir)
+    vts_e2e.make_copy(bad_dir, bad, bad_source, {}, still=True)
+    with open(os.path.join(bad_dir, bad_source + ".moc3"), "r+b") as handle:
+        handle.seek(bad_offset)
+        handle.write(struct.pack("<4I", bad_word, bad_word, bad_word, bad_word))
     return leftovers
 
 
@@ -64,6 +76,10 @@ def run(args, result):
             result.add("b_unicode_model_listed", (status == 200 and UNICODE in listed, "status=%d %s" % (status, listed.strip())))
             ascii_status, ascii_mean = settled_mean(args.port, ASCII)
             unicode_status, unicode_mean = settled_mean(args.port, UNICODE)
+            bad_status, bad_body = vts_e2e.http_call(args.port, "PUT", "/settings", json.dumps({"model": bad}).encode())
+            models_status = vts_e2e.http_call(args.port, "GET", "/models")[0]
+            alive = handle["proc"].poll() is None
+            after_status, after_mean = settled_mean(args.port, ASCII)
         finally:
             vts_e2e.stop_server(handle)
     finally:
@@ -73,6 +89,10 @@ def run(args, result):
     diff = vts_e2e.image_diff(ascii_mean, unicode_mean)
     ok = ascii_status == 200 and unicode_status == 200 and blank > BLANK_FLOOR and len(unicode_mean) == len(ascii_mean) and diff <= SAME_LIMIT
     result.add("c_unicode_frame_matches_ascii", (ok, "statuses=%d,%d ascii_vs_black=%.3f need >%.1f unicode_vs_ascii=%.3f need <=%.1f" % (ascii_status, unicode_status, blank, BLANK_FLOOR, diff, SAME_LIMIT)))
+    result.add("d_corrupt_moc_rejected", (bad_status // 100 in (4, 5) and models_status == 200 and alive, "put_status=%d body=%s models_status=%d alive=%s" % (bad_status, bad_body.decode(errors="replace").strip(), models_status, alive)))
+    after_diff = vts_e2e.image_diff(ascii_mean, after_mean)
+    after_ok = after_status == 200 and len(after_mean) == len(ascii_mean) and after_diff <= SAME_LIMIT
+    result.add("e_good_model_renders_after", (after_ok, "status=%d after_vs_ascii=%.3f need <=%.1f" % (after_status, after_diff, SAME_LIMIT)))
 
 
 def main():

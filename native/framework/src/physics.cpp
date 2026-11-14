@@ -79,6 +79,7 @@ struct physics {
     float wind_y;
     bool smoothed_ready;
     bool stepped;
+    bool drop_turns;
 };
 
 static float wrap_angle(float result)
@@ -283,6 +284,7 @@ physics* physics_load(model* target, const uint8_t* bytes, size_t length, status
     result->wind_y = 0.0f;
     result->smoothed_ready = false;
     result->stepped = false;
+    result->drop_turns = false;
     report(output_status, status::ok);
     return result;
 }
@@ -296,6 +298,11 @@ void physics_set_wind(physics* target, float horizontal, float vertical)
 {
     target->wind_x = horizontal;
     target->wind_y = vertical;
+}
+
+void physics_reset_turns(physics* target)
+{
+    target->drop_turns = true;
 }
 
 void physics_set_gravity(physics* target, float horizontal, float vertical)
@@ -437,6 +444,15 @@ static void step_setting(physics& target, physics_setting& setting, float step)
         if (output.reflect) {
             value = -value;
         }
+        float turn_step = value - output.now;
+        if (output.kind == physics_kind::angle && std::fabs(turn_step) > two_pi / 2.0f) {
+            float unwrapped = output.now + std::remainder(turn_step, two_pi);
+            if (target.drop_turns) {
+                output.previous += value - unwrapped;
+            } else {
+                value = unwrapped;
+            }
+        }
         output.now = value;
         if (output.slot >= 0) {
             write_value(output, target.step_values[output.slot], value);
@@ -475,6 +491,7 @@ void physics_evaluate(physics* target, model* owner, float delta_time)
         for (physics_setting& setting : target->settings) {
             step_setting(*target, setting, step);
         }
+        target->drop_turns = false;
         target->stepped = true;
         target->carry_time = target->carry_time - step;
     }
@@ -484,7 +501,17 @@ void physics_evaluate(physics* target, model* owner, float delta_time)
     float alpha = target->carry_time / step;
     float keep_alpha = 1.0f - alpha;
     for (const physics_output& output : target->outputs) {
-        write_value(output, values[output.parameter], std::fma(output.previous, keep_alpha, output.now * alpha));
+        float previous = output.previous;
+        float current = output.now;
+        if (output.kind == physics_kind::angle && output.scale != 0.0f) {
+            float first = output.minimum / output.scale;
+            float second = output.maximum / output.scale;
+            float low = std::fmin(first, second);
+            float high = std::fmax(first, second);
+            previous = std::fmax(low, std::fmin(high, previous));
+            current = std::fmax(low, std::fmin(high, current));
+        }
+        write_value(output, values[output.parameter], std::fma(previous, keep_alpha, current * alpha));
     }
 }
 

@@ -22,6 +22,7 @@ MODEL = "statehiyori%d" % os.getpid()
 SPEAKER = "statemao%d" % os.getpid()
 HARU = "stateharu%d" % os.getpid()
 OVERRIDE = "stateover%d" % os.getpid()
+LOST = "statelost%d" % os.getpid()
 FPS = vts_e2e.FPS
 WIDTH = vts_e2e.WIDTH
 SETTLE_SECONDS = 3.0
@@ -61,7 +62,7 @@ GAP_LIMIT = 2.0 / FPS
 LOOK_YAW = 150
 LOOK_PITCH = 150
 AHEAD_BAND = 30
-PITCH_HOME = 150
+PITCH_HOME = 0
 LOOKS = {"look_left": (0, -1), "look_right": (0, 1), "look_up": (1, 1), "look_down": (1, -1)}
 GIF = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
 
@@ -371,18 +372,39 @@ def check_tapbody(port, name):
     return ok and json.loads(played[1]).get("motion") == "TapBody", "first=%s %s" % (played, detail)
 
 
-def check_idle_loop(args, name, loop):
-    log_path = args.out + ".loop.log"
-    handle = vts_e2e.start_server(args.binary, args.port + 1, log_path, model=name, settings={"idle_loop": loop, "face": "nosuch"})
+def idle_run(args, name, settings, log_path):
+    handle = vts_e2e.start_server(args.binary, args.port + 1, log_path, model=name, settings=settings)
     try:
-        settings = current_settings(args.port + 1)
+        reported = current_settings(args.port + 1)
         _, state = state_call(args.port + 1, "GET", "")
     finally:
         vts_e2e.stop_server(handle)
     with open(log_path) as reader:
-        log = reader.read()
+        return reported, state, reader.read()
+
+
+def check_idle_loop(args, name, loop):
+    settings, state, log = idle_run(args, name, {"idle_loop": loop, "face": "nosuch"}, args.out + ".loop.log")
     ok = settings.get("idle_loop") == loop and ("hikari: idle loop %s" % loop) in log and "settings.json face \"nosuch\" is not a state" in log and json.loads(state)["face"] == "neutral"
     return ok, "settings.idle_loop=%s loop_line=%s face_line=%s state=%s" % (settings.get("idle_loop"), ("hikari: idle loop %s" % loop) in log, "is not a state" in log, state)
+
+
+def check_tracking_lost_loop(args):
+    target = os.path.join(vts_e2e.REPO, "models", LOST)
+    both = {"FileReferences": {"IdleAnimation": "haru_g_m01.motion3.json", "IdleAnimationWhenTrackingLost": "haru_g_m02.motion3.json"}}
+    lost_only = {"FileReferences": {"IdleAnimationWhenTrackingLost": "haru_g_m02.motion3.json"}}
+    same = {"FileReferences": {"IdleAnimation": "haru_g_m02.motion3.json", "IdleAnimationWhenTrackingLost": "haru_g_m02.motion3.json"}}
+    rows = []
+    try:
+        for index, (vtube, settings) in enumerate(((both, {}), (both, {"tracking_lost_loop": False}), (lost_only, {"tracking_lost_loop": False}), (same, {"tracking_lost_loop": False}))):
+            shutil.rmtree(target, ignore_errors=True)
+            vts_e2e.make_copy(target, LOST, "Haru", vtube)
+            reported, _, log = idle_run(args, LOST, settings, "%s.lost%d.log" % (args.out, index))
+            rows.append((reported.get("tracking_lost_loop"), [line for line in log.splitlines() if line.startswith("hikari: idle loop ")]))
+    finally:
+        shutil.rmtree(target, ignore_errors=True)
+    ok = rows == [(True, ["hikari: idle loop haru_g_m02"]), (False, ["hikari: idle loop haru_g_m01"]), (False, ["hikari: idle loop haru_g_idle"]), (False, ["hikari: idle loop haru_g_m02"])]
+    return ok, "default=%s false=%s false_without_idle_animation=%s false_same_file=%s need tracking-lost haru_g_m02, idle haru_g_m01, model3 Idle haru_g_idle, then shared haru_g_m02" % tuple(rows)
 
 
 def check_settings_face(port):
@@ -573,6 +595,9 @@ def check_wav_rejects(port):
 
 
 def run(args, result):
+    if args.only == "ze_tracking_lost_loop":
+        result.add("ze_tracking_lost_loop", check_tracking_lost_loop(args))
+        return
     copies = []
     mouth = {"ParameterSettings": [{"Name": output, "Input": vts, "OutputLive2D": output} for vts, output in vts_e2e.ROUTES]}
     for name, source, vtube in ((MODEL, "Hiyori", {}), (SPEAKER, vts_e2e.SOURCE_MODEL, mouth)):
@@ -655,6 +680,7 @@ def run(args, result):
         handle = None
         result.add("w_idle_loop", check_idle_loop(args, HARU, "haru_g_m15"))
         result.add("zc_trimmed_defaults", check_trimmed_defaults(args, trimmed))
+        result.add("ze_tracking_lost_loop", check_tracking_lost_loop(args))
     finally:
         try:
             if handle:
@@ -669,7 +695,7 @@ def main():
     parser.add_argument("--binary", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--only", choices=["y_default_actions_play", "zd_action_params_rest"])
+    parser.add_argument("--only", choices=["y_default_actions_play", "zd_action_params_rest", "ze_tracking_lost_loop"])
     args = parser.parse_args()
     if args.port == vts_e2e.LIVE_PORT:
         parser.error("port %d is the live service" % vts_e2e.LIVE_PORT)

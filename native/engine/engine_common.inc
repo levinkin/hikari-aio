@@ -35,6 +35,7 @@ struct engine : public engine_gpu
     std::vector<hfw::expression*> retired_expressions;
     hfw::breath_wave breath_waves[5] = {};
     hfw::mat4 mvp = {};
+    float transition_seconds = 0.0f;
     int width = 0;
     int height = 0;
     std::vector<uint8_t> rgba;
@@ -54,6 +55,8 @@ struct engine : public engine_gpu
     float view_rot = 0;
     float physics_weight = 1;
     float wind = 0;
+    float wind_direction = 0;
+    float gravity_degrees = NAN;
     double wind_clock = 0;
     float wind_phase[4] = {0, 0, 0, 0};
     float gust = 0;
@@ -68,6 +71,7 @@ struct engine : public engine_gpu
     uint32_t motion_seed = 0;
     unsigned int blink_seed = 1;
     std::map<const hfw::motion*, std::vector<int32_t>> motion_params;
+    std::map<const hfw::motion*, bool> holds_eyes;
     std::vector<char> rest_marks;
     float frame_ms = 0;
     engine_hook after_motion_update = NULL;
@@ -133,8 +137,26 @@ static void engine_release(engine* e)
 
 static std::vector<uint8_t> read_file(const std::string& path)
 {
-    std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
-    return std::vector<uint8_t>(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    std::filesystem::path file_path = std::filesystem::u8path(path);
+    std::error_code error;
+    uintmax_t size = std::filesystem::file_size(file_path, error);
+    if (error || size > 2147483647u)
+    {
+        return std::vector<uint8_t>();
+    }
+    std::ifstream file(file_path, std::ios::binary);
+    try
+    {
+        std::vector<uint8_t> bytes((size_t)size);
+        if (file.read((char*)bytes.data(), (std::streamsize)size) && (uintmax_t)file.gcount() == size)
+        {
+            return bytes;
+        }
+    }
+    catch (const std::bad_alloc&)
+    {
+    }
+    return std::vector<uint8_t>();
 }
 
 static void motion_part_opacities(engine* e, const std::string& dir)
@@ -227,6 +249,16 @@ static hfw::motion* motion_load(engine* e, const std::string& path, int32_t grou
             parameter_indices.push_back(index);
         }
     }
+    bool holds = false;
+    if (e->eye_blink != NULL)
+    {
+        const int32_t* blink_parameters = hfw::blink_params(e->eye_blink);
+        for (int32_t i = 0; i < hfw::blink_param_count(e->eye_blink); i++)
+        {
+            holds = holds || std::find(parameter_indices.begin(), parameter_indices.end(), blink_parameters[i]) != parameter_indices.end();
+        }
+    }
+    e->holds_eyes[motion] = holds;
     return motion;
 }
 
@@ -313,6 +345,7 @@ static engine* load_model(const std::string& path, const std::string& dir, int w
     }
     static const char empty_expression[] = "{\"FadeInTime\":0.3,\"FadeOutTime\":0.3,\"Parameters\":[]}";
     e->expressions[""] = hfw::expression_load(e->model, (const uint8_t*)empty_expression, strlen(empty_expression), NULL);
+    engine_transition_seconds(e, e->transition_seconds);
     e->pose_layer = hfw::layer_create();
     e->main_layer = hfw::layer_create();
     e->layers = {e->pose_layer, e->main_layer};
@@ -463,6 +496,7 @@ bool engine_expression_add(engine* e, const char* name, const char* path)
         e->retired_expressions.push_back(found->second);
     }
     e->expressions[name] = expression;
+    engine_transition_seconds(e, e->transition_seconds);
     return true;
 }
 
@@ -480,20 +514,25 @@ bool engine_expression_keep(engine* e, const char* name)
     return true;
 }
 
-void engine_expression_fade(engine* e, const char* name, float seconds)
+void engine_transition_seconds(engine* e, float seconds)
 {
-    auto found = e->expressions.find(name);
-    if (found == e->expressions.end())
+    e->transition_seconds = seconds;
+    for (auto& expression : e->expressions)
     {
-        return;
+        hfw::expression_set_fades(expression.second, seconds, seconds);
     }
-    hfw::expression_set_fades(found->second, seconds, seconds);
 }
 
-void engine_physics_set(engine* e, float strength, float wind, float gravity_degrees)
+void engine_physics_set(engine* e, float strength, float wind, float wind_degrees, float gravity_degrees)
 {
     e->physics_weight = std::fmax(strength / 50.0f, 0.0f);
     e->wind = std::isfinite(wind) ? wind / 100.0f : 0.0f;
+    e->wind_direction = fmodf(wind_degrees - 90.0f, 360.0f) * (float)M_PI / 180.0f;
+    if (e->simulation != NULL && std::fabs(gravity_degrees - e->gravity_degrees) >= 180.0f)
+    {
+        hfw::physics_reset_turns(e->simulation);
+    }
+    e->gravity_degrees = gravity_degrees;
     if (e->simulation != NULL)
     {
         float radians = fmodf(gravity_degrees, 360.0f) * (float)M_PI / 180.0f;
@@ -523,12 +562,8 @@ void engine_physics_scale(engine* e, const char* id, float strength, float wind)
 
 void engine_expressions_stop(engine* e)
 {
-    hfw::layer_destroy(e->main_layer);
-    hfw::layer_destroy(e->pose_layer);
-    e->pose_layer = hfw::layer_create();
-    e->main_layer = hfw::layer_create();
-    e->layers[0] = e->pose_layer;
-    e->layers[1] = e->main_layer;
+    engine_expression(e, 0, "");
+    engine_expression(e, 1, "");
 }
 
 void engine_breath_enable(engine* e, bool on)
@@ -569,6 +604,20 @@ bool engine_motion_idle(engine* e, const char* group)
     if (found->second.size() == 1)
     {
         hfw::motion_set_loop(found->second[0], true, false);
+    }
+    return true;
+}
+
+bool engine_motion_hold(engine* e, const char* group)
+{
+    auto found = e->motions.find(group);
+    if (found == e->motions.end())
+    {
+        return false;
+    }
+    for (hfw::motion* motion : found->second)
+    {
+        hfw::motion_hold(motion);
     }
     return true;
 }
@@ -622,14 +671,8 @@ static void rest_hook(void* context)
         float end_time = hfw::queue_entry_end_time(target->motion_queue, i);
         char mark = hfw::queue_entry_fade_out_triggered(target->motion_queue, i) || (end_time >= 0.0f && hfw::queue_entry_state_time(target->motion_queue, i) >= end_time - hfw::motion_fade_out(motion)) ? 1 : 2;
         const std::vector<int32_t>& parameter_indices = target->motion_params[motion];
-        if (mark == 2 && target->eye_blink != NULL && (target->idle == NULL || std::find(target->idle->begin(), target->idle->end(), motion) == target->idle->end()))
-        {
-            const int32_t* blink_parameters = hfw::blink_params(target->eye_blink);
-            for (int32_t blink_index = 0; blink_index < hfw::blink_param_count(target->eye_blink); blink_index++)
-            {
-                eyes_held = eyes_held || std::find(parameter_indices.begin(), parameter_indices.end(), blink_parameters[blink_index]) != parameter_indices.end();
-            }
-        }
+        bool idle_motion = target->idle != NULL && std::find(target->idle->begin(), target->idle->end(), motion) != target->idle->end();
+        eyes_held = eyes_held || (mark == 2 && !idle_motion && target->holds_eyes[motion]);
         for (int32_t index : parameter_indices)
         {
             target->rest_marks[index] = std::max(target->rest_marks[index], mark);
@@ -673,7 +716,7 @@ static void before_physics_hook(void* context, float elapsed_seconds)
         double gusts = 0.45 * sin(3.1 * time + phases[0]) + 0.35 * sin(5.3 * time + phases[1]) + 0.2 * sin(1.3 * time + phases[2]);
         float wind_x = target->wind * (float)((0.45 + 0.45 * gusts) * (0.7 + 0.3 * sin(0.23 * time + phases[3])));
         float wind_y = target->wind * (float)(0.08 * sin(2.9 * time + phases[1]));
-        hfw::physics_set_wind(target->simulation, wind_x, wind_y);
+        hfw::physics_set_wind(target->simulation, wind_x * cosf(target->wind_direction) + wind_y * sinf(target->wind_direction), wind_y * cosf(target->wind_direction) - wind_x * sinf(target->wind_direction));
         if (!target->physics_scales.empty())
         {
             target->gust = std::fmin(std::hypot(wind_x, wind_y) / (0.9f * std::fabs(target->wind)), 1.0f);

@@ -22,7 +22,6 @@ static VTS_INPUTS: [(&CStr, &str); 12] = [
 ];
 
 const YAW_PER_ANGLE_X: f64 = 0.6;
-const PITCH_PER_REST_ANGLE: f64 = 6.0;
 const PITCH_PER_ANGLE_Y: f64 = 0.5;
 const HEAD_SMOOTH_MS: f64 = 80.0;
 const HEAD_TURN_SCALE: f32 = 0.6;
@@ -33,6 +32,7 @@ pub struct Behavior {
     states: Vec<(String, String)>,
     shown: [String; 2],
     own_idle: bool,
+    holds: Vec<String>,
     mouth_value: f64,
     pub bg_clock_ms: f64,
     asleep: bool,
@@ -44,8 +44,7 @@ pub struct Behavior {
     head_at: [f64; 2],
     head_dt_ms: f64,
     pub head_lead_ms: f32,
-    params: Vec<(i32, f32)>,
-    pub rest_angle: f64,
+    pub params: Vec<(i32, f32)>,
     angle_indices: [i32; 3],
     mouth_index: i32,
 }
@@ -71,15 +70,18 @@ extern "C" fn apply_early(context: *mut c_void) {
     let lead = behavior.head_lead_ms > 0.0 && !behavior.asleep;
     if lead {
         unsafe { engine_ffi::engine_params_ahead(behavior.engine, behavior.head_lead_ms, behavior.angle_indices.as_ptr(), head.as_mut_ptr(), 2) };
+        head = [head[0] * HEAD_TURN_SCALE, head[1] * HEAD_TURN_SCALE];
     }
     for (index, parameter) in behavior.angle_indices.into_iter().enumerate() {
         let value = unsafe { engine_ffi::engine_param_get(behavior.engine, parameter) };
-        unsafe { engine_ffi::engine_param_set(behavior.engine, parameter, value * HEAD_TURN_SCALE) };
-        if index < 2 && !lead {
-            head[index] = value;
+        let held = behavior.params.iter().any(|(held_index, _)| *held_index == parameter);
+        let shown = if held { value } else { value * HEAD_TURN_SCALE };
+        unsafe { engine_ffi::engine_param_set(behavior.engine, parameter, shown) };
+        if index < 2 && (held || !lead) {
+            head[index] = shown;
         }
     }
-    behavior.capture_head([head[0] * HEAD_TURN_SCALE, head[1] * HEAD_TURN_SCALE]);
+    behavior.capture_head(head);
 }
 
 extern "C" fn apply_mouth(context: *mut c_void) {
@@ -93,7 +95,7 @@ extern "C" fn apply_mouth(context: *mut c_void) {
 }
 
 impl Behavior {
-    pub fn new(engine: *mut engine_ffi::Engine, setup: &VtubeSetup, shipped: &[(String, PathBuf)], actions: &[(String, PathBuf)], idle_loop: &str, rest_angle: f64) -> Behavior {
+    pub fn new(engine: *mut engine_ffi::Engine, setup: &VtubeSetup, shipped: &[(String, PathBuf)], actions: &[(String, PathBuf)], idle_loop: &str, tracking_lost_loop: bool) -> Behavior {
         let mut remap: Vec<(&'static CStr, CString)> = Vec::new();
         for (id, input) in VTS_INPUTS {
             if unsafe { engine_ffi::engine_has_param(engine, id.as_ptr()) } {
@@ -111,6 +113,11 @@ impl Behavior {
                 unsafe { engine_ffi::engine_motion_add(engine, group.as_ptr(), file.as_ptr()) };
             }
         }
+        for name in &setup.holds {
+            if let Ok(group) = CString::new(name.as_str()) {
+                unsafe { engine_ffi::engine_motion_hold(engine, group.as_ptr()) };
+            }
+        }
         let mut states = setup.states.clone();
         for (name, path) in setup.state_files.iter().chain(shipped) {
             if states.iter().any(|state| &state.0 == name) {
@@ -121,21 +128,21 @@ impl Behavior {
                 states.push((name.clone(), key.into_string().unwrap_or_default()));
             }
         }
-        let picked = setup.idle_loops.iter().find(|row| row.0 == idle_loop).or(setup.idle_loops.first());
+        let lost = setup.tracking_lost_loop.as_ref().filter(|_| tracking_lost_loop);
+        let picked = setup.idle_loops.iter().chain(&setup.tracking_lost_loop).find(|row| row.0 == idle_loop).or(lost).or(setup.idle_loops.first());
         if let Some(row) = picked {
             println!("hikari: idle loop {}", row.0);
         }
         let loop_file = picked.and_then(|row| CString::new(row.1.to_string_lossy().as_bytes()).ok());
         let own_idle = loop_file.is_some_and(|file| unsafe { engine_ffi::engine_motion_add(engine, file.as_ptr(), file.as_ptr()) && engine_ffi::engine_motion_idle(engine, file.as_ptr()) });
         unsafe { engine_ffi::engine_idle_motions_enable(engine, true) };
-        let pitch_home = rest_angle * PITCH_PER_REST_ANGLE;
-        let pitch = (pitch_home.round() as i16).to_be_bytes();
         Behavior {
             engine,
             remap,
             states,
             shown: [String::new(), String::new()],
             own_idle,
+            holds: setup.holds.clone(),
             mouth_value: -1.0,
             bg_clock_ms: 0.0,
             asleep: false,
@@ -143,12 +150,11 @@ impl Behavior {
             random_wait_ms: -1.0,
             pool: Vec::new(),
             action_every_ms: (15000.0, 15000.0),
-            head: [0, 0, pitch[0], pitch[1]],
-            head_at: [0.0, pitch_home],
+            head: [0; 4],
+            head_at: [0.0; 2],
             head_dt_ms: 0.0,
             head_lead_ms: 0.0,
             params: Vec::new(),
-            rest_angle,
             angle_indices,
             mouth_index,
         }
@@ -172,14 +178,9 @@ impl Behavior {
         }
     }
 
-    pub fn hold_params(&mut self, params: &[(String, f32)]) {
-        let held = params.iter().filter_map(|(id, value)| CString::new(id.as_str()).ok().map(|id| (id, *value)));
-        self.params = held.map(|(id, value)| (unsafe { engine_ffi::engine_param_index(self.engine, param_ptr(&self.remap, &id)) }, value)).collect();
-    }
-
     pub fn react(&mut self, kind: &str) -> Value {
         let Ok(group) = CString::new(kind) else { return Value::Null };
-        let seconds = unsafe { engine_ffi::engine_motion_play(self.engine, group.as_ptr(), kind == "sleep") };
+        let seconds = unsafe { engine_ffi::engine_motion_play(self.engine, group.as_ptr(), kind == "sleep" || self.holds.iter().any(|name| name == kind)) };
         if seconds < 0.0 {
             return Value::Null;
         }
@@ -243,7 +244,7 @@ impl Behavior {
 
     fn capture_head(&mut self, head: [f32; 2]) {
         let (angle_x, angle_y) = (head[0] as f64, head[1] as f64);
-        let target = if self.asleep { [0.0, 0.0] } else { [(-angle_x / YAW_PER_ANGLE_X * 10.0).clamp(-800.0, 800.0), (self.rest_angle * PITCH_PER_REST_ANGLE + angle_y / PITCH_PER_ANGLE_Y * 10.0).clamp(0.0, 600.0)] };
+        let target = if self.asleep { [0.0, 0.0] } else { [(-angle_x / YAW_PER_ANGLE_X * 10.0).clamp(-800.0, 800.0), (angle_y / PITCH_PER_ANGLE_Y * 10.0).clamp(-600.0, 600.0)] };
         let blend = 1.0 - (-self.head_dt_ms / HEAD_SMOOTH_MS).exp();
         self.head_at[0] += (target[0] - self.head_at[0]) * blend;
         self.head_at[1] += (target[1] - self.head_at[1]) * blend;

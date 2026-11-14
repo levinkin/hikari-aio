@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import shutil
+import statistics
 import sys
 import time
 
@@ -35,8 +36,16 @@ HOLD_MARGIN = 2.0
 WAKE_FRAMES = FPS // 2
 WAKE_RATIO = 4.0
 GRAVITY_MARGIN = 2.0
+direction_margin = 1.0
 FLOOD_CALLS = 2000
 FLOOD_RSS_KB = 2048
+sweep_directions = range(150, 211)
+sweep_frames = FPS // 4
+sweep_ratio = 3.0
+turn_directions = range(0, 361, 2)
+turn_frames = HEAD_FRAMES * 2
+reset_ratio = 2.0
+lean_ratio = 5.0
 
 
 def crop(image, rows, cols):
@@ -63,6 +72,10 @@ def make_models(targets):
         os.mkdir(target)
         targets.append(target)
         vts_e2e.make_copy(target, "windparams_" + key, SOURCE, vtube, still=True)
+    target = os.path.join(vts_e2e.REPO, "models", "windparams_sweep")
+    os.mkdir(target)
+    targets.append(target)
+    vts_e2e.make_copy(target, "windparams_sweep", vts_e2e.WIND_MODEL, {"PhysicsSettings": {"Use": True, "PhysicsStrength": 50, "WindStrength": 0}}, still=True)
 
 
 def frames_for(port, key, count):
@@ -90,27 +103,27 @@ def physics_frames(port, body, count):
 
 
 def check_physics_errors(port):
-    cases = [(b"[1]", "needs a JSON object"), (b"nope", "needs a JSON object"), (b'{"wind": "high"}', "wind must be a number"), (b'{"strength": null}', "strength must be a number"), (b'{"gravity": true}', "gravity must be a number"), (b'{"wind": 1e39}', "wind must be a number"), (b'{"tilt": 1}', "unknown physics key tilt")]
+    cases = [(b"[1]", "needs a JSON object"), (b"nope", "needs a JSON object"), (b'{"wind": "high"}', "wind must be an object"), (b'{"wind": 100}', "wind must be an object"), (b'{"strength": null}', "strength must be a number"), (b'{"gravity": true}', "gravity must be an object"), (b'{"wind": {"strength": 1e39}}', "wind.strength must be a number"), (b'{"wind": {"direction": "up"}}', "wind.direction must be a number"), (b'{"wind": {"speed": 1}}', "unknown physics key wind.speed"), (b'{"gravity": {"strength": 1}}', "unknown physics key gravity.strength"), (b'{"tilt": 1}', "unknown physics key tilt")]
     replies = [post_physics(port, body) for body, _ in cases]
     ok = all(reply[0] == 400 and want in reply[1] for reply, (_, want) in zip(replies, cases))
     return ok, "400 cases=%d statuses=%s" % (len(cases), [reply[0] for reply in replies])
 
 
 def check_physics_partial(port):
-    first = post_physics(port, {"wind": 100})
-    second = post_physics(port, {"gravity": 90})
-    ok = first[0] == 200 and second == (200, {"strength": 50, "wind": 100, "gravity": 90})
-    return ok, "after wind=100 then gravity=90 reply=%s" % (second,)
+    first = post_physics(port, {"wind": {"strength": 100}})
+    second = post_physics(port, {"wind": {"direction": 45}, "gravity": {"direction": 90}})
+    ok = first[0] == 200 and second == (200, {"strength": 50, "wind": {"strength": 100, "direction": 45}, "gravity": {"direction": 90}})
+    return ok, "after wind.strength=100 then wind.direction=45 gravity.direction=90 reply=%s" % (second,)
 
 
 def check_physics_visible(port):
     vts_e2e.switch_model(port, "windparams_calm")
-    most = crop_drift(physics_frames(port, {"strength": 100, "wind": 100, "gravity": 0}, WIND_FRAMES))
+    most = crop_drift(physics_frames(port, {"strength": 100, "wind": {"strength": 100}, "gravity": {"direction": 0}}, WIND_FRAMES))
     windy = crop_drift(physics_frames(port, {"strength": 50}, WIND_FRAMES))
-    calm = crop_drift(physics_frames(port, {"wind": 0}, WIND_FRAMES))
-    down = [crop(image, HAIR_ROWS, HAIR_COLS) for image in physics_frames(port, {"gravity": 0}, FPS * 2)]
-    side = [crop(image, HAIR_ROWS, HAIR_COLS) for image in physics_frames(port, {"gravity": 90}, FPS * 2)]
-    post_physics(port, {"gravity": 0})
+    calm = crop_drift(physics_frames(port, {"wind": {"strength": 0}}, WIND_FRAMES))
+    down = [crop(image, HAIR_ROWS, HAIR_COLS) for image in physics_frames(port, {"gravity": {"direction": 0}}, FPS * 2)]
+    side = [crop(image, HAIR_ROWS, HAIR_COLS) for image in physics_frames(port, {"gravity": {"direction": 90}}, FPS * 2)]
+    post_physics(port, {"gravity": {"direction": 0}})
     tilt = vts_e2e.image_diff(vts_e2e.mean_image(down), vts_e2e.mean_image(side))
     control = vts_e2e.image_diff(vts_e2e.mean_image(down[:FPS]), vts_e2e.mean_image(down[FPS:]))
     runs = []
@@ -128,28 +141,139 @@ def check_physics_visible(port):
 
 def check_physics_switch(port):
     vts_e2e.switch_model(port, "windparams_calm")
-    set_reply = post_physics(port, {"strength": 80, "wind": 30, "gravity": 45})
+    set_reply = post_physics(port, {"strength": 80, "wind": {"strength": 30, "direction": 90}, "gravity": {"direction": 45}})
     vts_e2e.switch_model(port, "windparams_windy")
     vts_e2e.idle_frames(port, 2)
     reset = post_physics(port, {})
-    ok = set_reply[0] == 200 and reset == (200, {"strength": 50, "wind": 100, "gravity": 0})
+    ok = set_reply[0] == 200 and reset == (200, {"strength": 50, "wind": {"strength": 100, "direction": 90}, "gravity": {"direction": 0}})
     return ok, "set=%s after switch to windparams_windy reply=%s" % (set_reply, reset)
+
+
+def direction_crop(port, body):
+    vts_e2e.switch_model(port, "windparams_calm")
+    vts_e2e.switch_model(port, "windparams_windy")
+    return vts_e2e.mean_image([crop(image, HAIR_ROWS, HAIR_COLS) for image in physics_frames(port, body, WIND_FRAMES)])
+
+
+def check_wind_direction(port):
+    runs = [direction_crop(port, {"wind": {"strength": 100, "direction": direction}}) for direction in (90, 90, 270)]
+    repeat = vts_e2e.image_diff(runs[0], runs[1])
+    turned = vts_e2e.image_diff(runs[0], runs[2])
+    vts_e2e.switch_model(port, "windparams_calm")
+    return turned > repeat + direction_margin, "hair crop mean diff wind direction 270 vs 90=%.3f repeat 90 vs 90=%.3f need > repeat + %.1f" % (turned, repeat, direction_margin)
+
+
+def get_settings(port):
+    status, payload = vts_e2e.http_call(port, "GET", "/settings")
+    return json.loads(payload) if status == 200 else {}
+
+
+def put_settings(port, body):
+    status, payload = vts_e2e.http_call(port, "PUT", "/settings", json.dumps(body).encode())
+    text = payload.decode(errors="replace").strip()
+    return status, json.loads(text) if status == 200 else text
+
+
+def check_settings_physics(binary, port, out, result):
+    fallback = {"strength": 70, "wind": {"strength": 30, "direction": 270}}
+    handle = vts_e2e.start_server(binary, port, out + ".settings.log", model="windparams_windy", settings={"idle_actions": [], "physics": fallback})
+    try:
+        own = post_physics(port, {})
+        listed = get_settings(port).get("physics")
+        result.add("o_settings_own_wind_wins", (own == (200, {"strength": 50, "wind": {"strength": 100, "direction": 270}, "gravity": {"direction": 0}}) and listed == fallback, "windparams_windy has vtube strength 50 wind 100, settings physics=%s; POST {} reply=%s GET /settings physics=%s" % (fallback, own, listed)))
+        runs = [direction_crop(port, body) for body in ({}, {"wind": {"direction": 270}}, {"wind": {"direction": 90}})]
+        same = vts_e2e.image_diff(runs[0], runs[1])
+        other = vts_e2e.image_diff(runs[0], runs[2])
+        result.add("p_settings_wind_direction", (other > same + direction_margin, "hair crop mean diff settings direction 270 vs POST 270=%.3f vs POST 90=%.3f need > same + %.1f" % (same, other, direction_margin)))
+        post_physics(port, {"strength": 80})
+        wanted = {"wind": {"direction": 90}, "gravity": {"direction": 270}}
+        bad = put_settings(port, {"physics": {"wind": {"direction": "up"}}})
+        reply = put_settings(port, {"physics": wanted})
+        applied = post_physics(port, {})
+        with open(os.path.join(handle["run_dir"], "settings.json")) as reader:
+            saved = json.load(reader)
+    finally:
+        vts_e2e.stop_server(handle)
+    restart = {key: value for key, value in saved.items() if key not in ("port", "model")}
+    handle = vts_e2e.start_server(binary, port, out + ".restart.log", model="windparams_windy", settings=restart)
+    try:
+        listed = get_settings(port).get("physics")
+        again = post_physics(port, {})
+    finally:
+        vts_e2e.stop_server(handle)
+    expect = (200, {"strength": 50, "wind": {"strength": 100, "direction": 90}, "gravity": {"direction": 270}})
+    ok = bad[0] == 400 and "wind.direction must be a number" in bad[1] and reply[0] == 200 and reply[1].get("physics") == wanted and applied == expect and saved.get("physics") == wanted and listed == wanted and again == expect
+    result.add("q_put_settings_physics_persists", (ok, "bad PUT=%s PUT reply physics=%s POST {} after PUT over strength 80=%s settings.json physics=%s after restart GET physics=%s POST {}=%s" % (bad, reply[1].get("physics") if reply[0] == 200 else reply, applied, saved.get("physics"), listed, again)))
+    log_path = out + ".badsettings.log"
+    handle = vts_e2e.start_server(binary, port, log_path, model="windparams_windy", settings={"idle_actions": [], "physics": {"wind": {"direction": "up"}}})
+    try:
+        listed = get_settings(port).get("physics")
+        fell = post_physics(port, {})
+    finally:
+        vts_e2e.stop_server(handle)
+    with open(log_path) as reader:
+        lines = [line.strip() for line in reader if "settings.json physics" in line]
+    ok = len(lines) == 1 and listed == {} and fell == (200, {"strength": 50, "wind": {"strength": 100, "direction": 90}, "gravity": {"direction": 0}})
+    result.add("r_bad_settings_physics_starts", (ok, "log lines=%s GET physics=%s POST {}=%s" % (lines, listed, fell)))
 
 
 def check_physics_flood(port, pid):
     vts_e2e.idle_frames(port, 2)
     for _ in range(50):
-        post_physics(port, {"wind": 0})
+        post_physics(port, {"wind": {"strength": 0}})
     before = vts_e2e.process_usage(pid)[0]
     statuses = []
     started = time.monotonic()
     for index in range(FLOOD_CALLS):
-        statuses.append(post_physics(port, {"wind": index % 100, "gravity": index % 360})[0])
+        statuses.append(post_physics(port, {"wind": {"strength": index % 100, "direction": index % 360}, "gravity": {"direction": index % 360}})[0])
     elapsed = time.monotonic() - started
     vts_e2e.idle_frames(port, 2)
     after = vts_e2e.process_usage(pid)[0]
     ok = statuses.count(200) == FLOOD_CALLS and after - before <= FLOOD_RSS_KB
     return ok, "calls=%d ok=%d rps=%.0f rss_kb before=%d after=%d delta=%d need <=%d" % (FLOOD_CALLS, statuses.count(200), FLOOD_CALLS / elapsed, before, after, after - before, FLOOD_RSS_KB)
+
+
+def check_gravity_sweep(port):
+    vts_e2e.switch_model(port, "windparams_sweep")
+    post_physics(port, {"gravity": {"direction": sweep_directions[0]}})
+    vts_e2e.idle_frames(port, SETTLE_FRAMES)
+    means = []
+    for direction in sweep_directions:
+        post_physics(port, {"gravity": {"direction": direction}})
+        means.append(vts_e2e.mean_image([crop(image, HAIR_ROWS, HAIR_COLS) for image in vts_e2e.idle_frames(port, sweep_frames)[1]]))
+    post_physics(port, {"gravity": {"direction": 0}})
+    vts_e2e.switch_model(port, "windparams_calm")
+    jumps = [vts_e2e.image_diff(first, second) for first, second in zip(means, means[1:])]
+    largest = max(jumps)
+    median = statistics.median(jumps)
+    worst = sweep_directions[jumps.index(largest)]
+    return largest < median * sweep_ratio, "hair crop mean step jump gravity %d..%d max=%.3f at %d->%d median=%.3f need max < median * %.1f" % (sweep_directions[0], sweep_directions[-1], largest, worst, worst + 1, median, sweep_ratio)
+
+
+def settled_hair(port):
+    vts_e2e.idle_frames(port, SETTLE_FRAMES)
+    return vts_e2e.mean_image([crop(image, HAIR_ROWS, HAIR_COLS) for image in vts_e2e.idle_frames(port, turn_frames)[1]])
+
+
+def check_gravity_jump_reset(port):
+    vts_e2e.switch_model(port, "windparams_calm")
+    vts_e2e.switch_model(port, "windparams_sweep")
+    post_params(port, HOLD)
+    reference = settled_hair(port)
+    repeat = settled_hair(port)
+    for direction in turn_directions:
+        post_physics(port, {"gravity": {"direction": direction}})
+        vts_e2e.idle_frames(port, sweep_frames)
+    turned = settled_hair(port)
+    post_physics(port, {"gravity": {"direction": 0}})
+    after = settled_hair(port)
+    post_params(port, {key: None for key in HOLD})
+    vts_e2e.switch_model(port, "windparams_calm")
+    noise = vts_e2e.image_diff(reference, repeat)
+    reset = vts_e2e.image_diff(after, reference)
+    lean = vts_e2e.image_diff(turned, reference)
+    ok = reset < noise * reset_ratio and lean > noise * lean_ratio
+    return ok, "hair crop mean vs fresh gravity 0: after sweep 0..360 then post 0=%.3f at 360=%.3f repeat noise=%.3f need after < noise * %.1f and at 360 > noise * %.1f" % (reset, lean, noise, reset_ratio, lean_ratio)
 
 
 def check_physics(port, pid, result):
@@ -162,6 +286,9 @@ def check_physics(port, pid, result):
     result.add("k_physics_gravity_visible", gravity)
     result.add("l_physics_switch_resets", check_physics_switch(port))
     result.add("m_physics_flood_cheap", check_physics_flood(port, pid))
+    result.add("n_physics_wind_direction", check_wind_direction(port))
+    result.add("s_gravity_sweep_continuous", check_gravity_sweep(port))
+    result.add("t_gravity_jump_resets_turns", check_gravity_jump_reset(port))
 
 
 def head_frames(port, value):
@@ -195,7 +322,10 @@ def check_hold(port):
     for hold in (HOLD, released):
         still = vts_e2e.mean_image([crop(image, FACE_ROWS, FACE_COLS) for image in face_frames(port, "neutral", hold)])
         talking = [crop(image, FACE_ROWS, FACE_COLS) for image in face_frames(port, "laughing", hold)]
-        spreads.append(sum(vts_e2e.image_diff(image, still) for image in talking) / max(len(talking), 1))
+        if not talking:
+            vts_e2e.http_call(port, "POST", "/state?face=neutral")
+            return False, "no talking frames rendered"
+        spreads.append(sum(vts_e2e.image_diff(image, still) for image in talking) / len(talking))
     vts_e2e.http_call(port, "POST", "/state?face=neutral")
     ok = spreads[0] < HOLD_LIMIT and spreads[1] > spreads[0] + HOLD_MARGIN
     return ok, "face crop laughing+talking vs neutral idle diff held=%.3f need <%.2f released=%.3f need > held + %.1f" % (spreads[0], HOLD_LIMIT, spreads[1], HOLD_MARGIN)
@@ -236,6 +366,7 @@ def run(args, result):
     try:
         make_models(targets)
         frames, api, heads, hold, wake = serve(args.binary, args.port, args.out + ".log", list(CONFIGS), True, result)
+        check_settings_physics(args.binary, args.port, args.out, result)
         main_frames, _, _, _, _ = serve(args.main_binary, args.port, args.out + ".main.log", ["calm"], False, result)
     finally:
         for target in targets:
