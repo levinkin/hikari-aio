@@ -1939,6 +1939,20 @@ fn setting_model(settings: &Value, models: &BTreeMap<String, PathBuf>) -> String
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn main() {
     let mut args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
+        print!("usage: hikari [options]
+
+  --window        open the window (default)
+  --headless      no window, http server only
+  --fps N         window frame rate, 1 to 240 (default 60)
+  --no-share      stop sharing frames with obs (spout2 on windows, syphon on mac)
+  --port N        serve on this port for this run, 1 to 65535 (default: port in settings.json)
+  --settings      open the settings screen for the hikari already running on the port
+  --no-settings   skip the automatic settings window
+  -h, --help      show this help
+");
+        return;
+    }
     let pause = args.len() == 1;
     let headless = args.iter().any(|arg| arg == "--headless");
     let mut no_settings = false;

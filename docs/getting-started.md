@@ -117,6 +117,7 @@ in the frame stream, the picture after the codec byte depends on the codec:
 | `--port N` | integer | serves on that port for this run, 1 to 65535 | `port` setting |
 | `--settings` | bool | opens the settings screen for the hikari already running on `port` (it opens in its own terminal window on every launch unless `--no-settings` is passed) | `false` |
 | `--no-settings` | bool | skips the automatic settings terminal window without changing renderer startup | `false` |
+| `-h`, `--help` | bool | prints these options and exits | `false` |
 
 ## settings.json
 
