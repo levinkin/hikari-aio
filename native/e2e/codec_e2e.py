@@ -150,7 +150,7 @@ def check_port_arg(binary, port, log_path):
         vts_e2e.stop_server(handle)
     bad = {}
     for value in ["0", "65536", "abc", "80.5"]:
-        run = subprocess.run([binary, "--headless", "--port", value], capture_output=True, text=True, timeout=20)
+        run = subprocess.run([binary, "--headless", "--no-settings", "--port", value], capture_output=True, text=True, timeout=20)
         if run.returncode != 2 or run.stderr.strip() != "hikari: --port must be 1 to 65535, got %s" % value:
             bad[value] = (run.returncode, run.stderr.strip())
     return status == 200 and not bad, "settings_port=%d --port=%d status=%d bad=%s" % (port + 1, port + 2, status, bad)

@@ -87,6 +87,36 @@ class Terminal:
             self.leader = -1
 
 
+def settings_processes(handle, binary, port):
+    run_binary = os.path.join(handle["run_dir"], os.path.basename(binary))
+    pattern = "^" + re.escape(run_binary) + " --settings --port " + str(port) + "$"
+    deadline = time.monotonic() + 3
+    while True:
+        found = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True)
+        if found.returncode not in (0, 1):
+            raise RuntimeError(found.stderr)
+        children = [int(pid) for pid in found.stdout.split()]
+        if children or time.monotonic() >= deadline:
+            return children
+        time.sleep(0.1)
+
+
+def check_auto_settings(args, result):
+    for window_args, auto_settings, name in [((), True, "plain_launch_opens_settings"), ((), False, "headless_no_settings"), (("--window",), False, "window_no_settings")]:
+        handle = vts_e2e.start_server(args.binary, args.port, args.out + "." + name + ".log", args=window_args, model=MODELS[0], auto_settings=auto_settings)
+        children = []
+        try:
+            children = settings_processes(handle, args.binary, args.port)
+            result.add(name, (bool(children) == auto_settings, "settings processes within 3s: %s" % children))
+        finally:
+            for child in children:
+                try:
+                    os.kill(child, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            vts_e2e.stop_server(handle)
+
+
 def settings(port):
     status, body = vts_e2e.http_call(port, "GET", "/settings")
     return json.loads(body) if status == 200 else {}
@@ -278,6 +308,7 @@ def main():
     result = vts_e2e.Result(args.out)
     with open(args.out + ".pty", "wb") as transcript:
         try:
+            check_auto_settings(args, result)
             run(args, result, transcript)
         except BaseException as error:
             result.payload["error"] = "%s: %s" % (type(error).__name__, error)

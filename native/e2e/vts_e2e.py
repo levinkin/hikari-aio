@@ -518,7 +518,7 @@ def listen_pid(port):
     return int(out[0]) if out else 0
 
 
-def start_server(binary, port, log_path, args=(), model="", settings=None, files=None):
+def start_server(binary, port, log_path, args=(), model="", settings=None, files=None, auto_settings=False):
     holder = listen_pid(port)
     if holder:
         raise RuntimeError("port %d already in use by pid %d" % (port, holder))
@@ -531,7 +531,7 @@ def start_server(binary, port, log_path, args=(), model="", settings=None, files
         json.dump(dict({"port": port, "model": model}, **(settings or {})), writer)
     log = open(log_path, "w")
     try:
-        proc = subprocess.Popen([run_binary] + list(args) + ([] if "--window" in args else ["--headless"]), cwd=os.path.join(REPO, "native"), stdout=log, stderr=log, start_new_session=True)
+        proc = subprocess.Popen([run_binary] + list(args) + ([] if auto_settings else ["--no-settings"]) + ([] if "--window" in args else ["--headless"]), cwd=os.path.join(REPO, "native"), stdout=log, stderr=log, start_new_session=True)
     except BaseException:
         log.close()
         shutil.rmtree(run_dir, ignore_errors=True)

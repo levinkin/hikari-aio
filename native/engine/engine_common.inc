@@ -55,7 +55,7 @@ struct engine : public engine_gpu
     float view_rot = 0;
     float physics_weight = 1;
     float wind = 0;
-    float wind_direction = 0;
+    float wind_cos = 1, wind_sin = 0;
     float gravity_degrees = NAN;
     double wind_clock = 0;
     float wind_phase[4] = {0, 0, 0, 0};
@@ -527,7 +527,9 @@ void engine_physics_set(engine* e, float strength, float wind, float wind_degree
 {
     e->physics_weight = std::fmax(strength / 50.0f, 0.0f);
     e->wind = std::isfinite(wind) ? wind / 100.0f : 0.0f;
-    e->wind_direction = fmodf(wind_degrees - 90.0f, 360.0f) * (float)M_PI / 180.0f;
+    float radians = fmodf(wind_degrees - 90.0f, 360.0f) * (float)M_PI / 180.0f;
+    e->wind_cos = cosf(radians);
+    e->wind_sin = sinf(radians);
     if (e->simulation != NULL && std::fabs(gravity_degrees - e->gravity_degrees) >= 180.0f)
     {
         hfw::physics_reset_turns(e->simulation);
@@ -672,7 +674,8 @@ static void rest_hook(void* context)
         char mark = hfw::queue_entry_fade_out_triggered(target->motion_queue, i) || (end_time >= 0.0f && hfw::queue_entry_state_time(target->motion_queue, i) >= end_time - hfw::motion_fade_out(motion)) ? 1 : 2;
         const std::vector<int32_t>& parameter_indices = target->motion_params[motion];
         bool idle_motion = target->idle != NULL && std::find(target->idle->begin(), target->idle->end(), motion) != target->idle->end();
-        eyes_held = eyes_held || (mark == 2 && !idle_motion && target->holds_eyes[motion]);
+        auto held = target->holds_eyes.find(motion);
+        eyes_held = eyes_held || (mark == 2 && !idle_motion && held != target->holds_eyes.end() && held->second);
         for (int32_t index : parameter_indices)
         {
             target->rest_marks[index] = std::max(target->rest_marks[index], mark);
@@ -716,7 +719,7 @@ static void before_physics_hook(void* context, float elapsed_seconds)
         double gusts = 0.45 * sin(3.1 * time + phases[0]) + 0.35 * sin(5.3 * time + phases[1]) + 0.2 * sin(1.3 * time + phases[2]);
         float wind_x = target->wind * (float)((0.45 + 0.45 * gusts) * (0.7 + 0.3 * sin(0.23 * time + phases[3])));
         float wind_y = target->wind * (float)(0.08 * sin(2.9 * time + phases[1]));
-        hfw::physics_set_wind(target->simulation, wind_x * cosf(target->wind_direction) + wind_y * sinf(target->wind_direction), wind_y * cosf(target->wind_direction) - wind_x * sinf(target->wind_direction));
+        hfw::physics_set_wind(target->simulation, wind_x * target->wind_cos + wind_y * target->wind_sin, wind_y * target->wind_cos - wind_x * target->wind_sin);
         if (!target->physics_scales.empty())
         {
             target->gust = std::fmin(std::hypot(wind_x, wind_y) / (0.9f * std::fabs(target->wind)), 1.0f);

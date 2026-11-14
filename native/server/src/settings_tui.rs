@@ -223,7 +223,7 @@ impl Tui {
         }
         self.read_view();
         self.actions = serde_json::from_value(get_json(self.port, "GET", "/action", "")?["actions"].take()).unwrap_or_default();
-        self.live_physics = crate::effective_physics(None, get_json(self.port, "POST", "/physics", "{}")?.as_object().unwrap_or(&serde_json::Map::new()));
+        self.live_physics = crate::effective_physics(None, &crate::physics_changes(get_json(self.port, "POST", "/physics", "{}")?.as_object().unwrap_or(&serde_json::Map::new())).unwrap_or_default());
         self.saved = saved;
         self.reset();
         Ok(())
@@ -691,7 +691,7 @@ pub fn run(port: u16, bg_dir: PathBuf) {
                         let reloaded = if same_model {
                             if !pending.contains_key("physics") {
                                 if let Ok(live) = get_json(port, "POST", "/physics", "{}") {
-                                    tui.live_physics = crate::effective_physics(None, live.as_object().unwrap_or(&serde_json::Map::new()));
+                                    tui.live_physics = crate::effective_physics(None, &crate::physics_changes(live.as_object().unwrap_or(&serde_json::Map::new())).unwrap_or_default());
                                 }
                             }
                             tui.saved = settings;
