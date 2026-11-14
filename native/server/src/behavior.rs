@@ -32,6 +32,9 @@ pub struct Behavior {
     states: Vec<(String, String)>,
     shown: [String; 2],
     own_idle: bool,
+    idle_loops: Vec<(String, PathBuf)>,
+    tracking_lost_loop: Option<(String, PathBuf)>,
+    idle_file: Option<PathBuf>,
     holds: Vec<String>,
     mouth_value: f64,
     pub bg_clock_ms: f64,
@@ -128,20 +131,15 @@ impl Behavior {
                 states.push((name.clone(), key.into_string().unwrap_or_default()));
             }
         }
-        let lost = setup.tracking_lost_loop.as_ref().filter(|_| tracking_lost_loop);
-        let picked = setup.idle_loops.iter().chain(&setup.tracking_lost_loop).find(|row| row.0 == idle_loop).or(lost).or(setup.idle_loops.first());
-        if let Some(row) = picked {
-            println!("hikari: idle loop {}", row.0);
-        }
-        let loop_file = picked.and_then(|row| CString::new(row.1.to_string_lossy().as_bytes()).ok());
-        let own_idle = loop_file.is_some_and(|file| unsafe { engine_ffi::engine_motion_add(engine, file.as_ptr(), file.as_ptr()) && engine_ffi::engine_motion_idle(engine, file.as_ptr()) });
-        unsafe { engine_ffi::engine_idle_motions_enable(engine, true) };
-        Behavior {
+        let mut behavior = Behavior {
             engine,
             remap,
             states,
             shown: [String::new(), String::new()],
-            own_idle,
+            own_idle: false,
+            idle_loops: setup.idle_loops.clone(),
+            tracking_lost_loop: setup.tracking_lost_loop.clone(),
+            idle_file: None,
             holds: setup.holds.clone(),
             mouth_value: -1.0,
             bg_clock_ms: 0.0,
@@ -157,7 +155,45 @@ impl Behavior {
             params: Vec::new(),
             angle_indices,
             mouth_index,
+        };
+        behavior.set_idle_loop(idle_loop, tracking_lost_loop);
+        behavior
+    }
+
+    pub fn set_idle_loop(&mut self, idle_loop: &str, tracking_lost_loop: bool) {
+        let mut picked = None;
+        for row in self.idle_loops.iter().chain(&self.tracking_lost_loop) {
+            if row.0 == idle_loop {
+                picked = Some(row);
+                break;
+            }
         }
+        if picked.is_none() && tracking_lost_loop {
+            picked = self.tracking_lost_loop.as_ref();
+        }
+        let picked = picked.or(self.idle_loops.first());
+        let picked_file = match picked {
+            Some(row) => Some(&row.1),
+            None => None,
+        };
+        if self.idle_file.as_ref() == picked_file {
+            return;
+        }
+        let mut loaded = false;
+        match picked {
+            Some(row) => {
+                if let Ok(file) = CString::new(row.1.to_string_lossy().as_bytes()) {
+                    loaded = unsafe { engine_ffi::engine_motion_idle(self.engine, file.as_ptr()) || (engine_ffi::engine_motion_add(self.engine, file.as_ptr(), file.as_ptr()) && engine_ffi::engine_motion_idle(self.engine, file.as_ptr())) };
+                }
+                println!("hikari: idle loop {}", row.0);
+            }
+            None => println!("hikari: idle loop none"),
+        }
+        if !loaded {
+            unsafe { engine_ffi::engine_motion_idle(self.engine, CString::default().as_ptr()) };
+        }
+        self.own_idle = loaded;
+        self.idle_file = picked_file.cloned();
     }
 
     fn advance_wait(&mut self, dt_ms: f64) {

@@ -1363,6 +1363,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 fn sync_idle(app: &App, state: &mut LaneState) {
     let idle = app.idle.lock().unwrap_or_else(PoisonError::into_inner);
     if state.idle_generation != idle.generation {
+        state.behavior.set_idle_loop(&idle.idle_loop, app.tracking_lost_loop.load(Ordering::SeqCst));
         if let Ok(every) = parse_every(&idle.every) {
             state.behavior.set_actions(&idle.actions, every);
         }
@@ -1548,7 +1549,7 @@ fn put_settings(app: &App, body: Body, out: &mut TcpStream) {
     println!("hikari: idle actions={} action_every={}", actions.join(","), every);
     idle.actions = actions;
     idle.every = every;
-    if !tuning_only {
+    if !tuning_only || tracking_lost_loop.is_some() && tracking_lost_loop != Some(app.tracking_lost_loop.load(Ordering::SeqCst)) {
         idle.generation += 1;
     }
     if let Some(seconds) = transition_seconds {

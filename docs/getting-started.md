@@ -130,7 +130,7 @@ in the frame stream, the picture after the codec byte depends on the codec:
 | `action_every` | integer or `[min, max]` | whole seconds between idle actions, > 0. a pair waits a random time between the two | `15` |
 | `idle_loop` | string | an `Idle` motion name | the vtube studio idle animation, else the first `Idle` motion |
 | `transition_seconds` | number | 0 to 3. seconds an expression fades in and out. applies live | `0.5` |
-| `tracking_lost_loop` | bool | `true` plays the vtube studio tracking-lost idle animation as the default loop when the model has one, `false` the normal idle animation. `idle_loop` still wins. applies on the next model load | `true` |
+| `tracking_lost_loop` | bool | `true` plays the vtube studio tracking-lost idle animation as the default loop when the model has one, `false` the normal idle animation. `idle_loop` still wins. applies right away | `true` |
 | `physics` | object | same shape as the `POST /physics` body, any subset, e.g. `{"wind": {"strength": 40, "direction": 270}, "gravity": {"direction": 0}}`. used for models whose `.vtube.json` has no physics of its own (a model's own strength and wind win). directions always come from here | `{"strength": 50, "wind": {"strength": 0, "direction": 90}, "gravity": {"direction": 0}}` |
 
 actions are model3.json motion groups and vtube studio animation hotkeys, plus some default shipped ones in `default.model3.json` next to `hikari`. edit that file to change them.
